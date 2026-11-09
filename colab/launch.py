@@ -46,13 +46,13 @@ def main():
         if not clone_ok:
             import zipfile
             import tempfile
-            archive_url = "https://codeload.github.com/etched-ai/open-oasis/zip/refs/heads/main"
-            archive_path = Path(tempfile.gettempdir()) / "open-oasis-main.zip"
+            archive_url = "https://codeload.github.com/etched-ai/open-oasis/zip/refs/heads/master"
+            archive_path = Path(tempfile.gettempdir()) / "open-oasis-master.zip"
             try:
                 urllib.request.urlretrieve(archive_url, archive_path)
                 with zipfile.ZipFile(archive_path) as zf:
                     zf.extractall("/content")
-                extracted = Path("/content/open-oasis-main")
+                extracted = Path("/content/open-oasis-master")
                 if not (extracted / "generate.py").is_file():
                     # GitHub archive folders can include a commit suffix.
                     candidates = [p for p in Path("/content").glob("open-oasis-*") if (p / "generate.py").is_file()]
