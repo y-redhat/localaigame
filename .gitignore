@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+.cache/
+checkpoints/
+weights/
+*.safetensors
+*.mp4
+*.webm
+.DS_Store
