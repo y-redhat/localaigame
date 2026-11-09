@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LocalAI Game — Oasis</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#10141d;color:#eef2ff}
+*{box-sizing:border-box}body{margin:0;max-width:1100px;padding:24px;margin-inline:auto}
+h1{font-size:clamp(1.5rem,4vw,2.2rem);margin:.2rem 0}.sub{color:#aab5ca}
+.panel{background:#1b2331;border:1px solid #344158;border-radius:14px;padding:16px;margin:16px 0}
+label{display:block;margin:10px 0 6px;color:#c8d2e4}input,button{font:inherit;border-radius:9px;padding:10px;border:1px solid #465570;background:#101825;color:#fff}
+input[type=file]{max-width:100%}button{cursor:pointer;background:#355da8;border:0;font-weight:650}button:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.row>div{flex:1;min-width:210px}
+#screen{display:block;width:100%;max-height:65vh;object-fit:contain;background:#05070b;border-radius:10px;image-rendering:auto}
+#status{white-space:pre-wrap;color:#b9c8df}.keys{display:grid;grid-template-columns:repeat(3,52px);gap:6px;justify-content:center;margin:10px}
+.keys button{height:44px;padding:4px}.help{font-size:.9rem;color:#aab5ca}
+</style>
+</head>
+<body>
+<h1>LocalAI Game <span class="sub">/ Oasis 500M</span></h1>
+<p class="sub">画像を初期画面として読み込み、キー入力に応じた次のフレームを生成します。</p>
+<section class="panel">
+<div class="row"><div><label for="token">Colabに表示されたセッショントークン</label><input id="token" type="password" autocomplete="off" placeholder="token"></div>
+<div><label for="prompt">初期画像（PNG / JPEG / WebP）</label><input id="prompt" type="file" accept="image/png,image/jpeg,image/webp"></div>
+<div><button id="start">モデルを読み込んで開始</button></div></div>
+<p id="status">未接続</p>
+</section>
+<section class="panel">
+<img id="screen" alt="生成されたゲーム画面">
+<div class="row" style="justify-content:center;margin-top:12px">
+<div class="keys">
+<span></span><button data-key="forward">W ↑</button><span></span>
+<button data-key="left">A ←</button><button data-key="back">S ↓</button><button data-key="right">D →</button>
+</div>
+<div class="keys">
+<span></span><button data-key="jump">Space</button><span></span>
+<button data-key="sneak">Shift</button><button data-key="sprint">Ctrl</button><button data-key="attack">Click</button>
+</div>
+</div>
+<p class="help">WASD：移動 / Space：ジャンプ / Shift：スニーク / Ctrl：ダッシュ / クリック：攻撃。キーを押すと次のフレームを1枚生成します。生成速度はGPU性能とDDIMステップ数に依存します。</p>
+</section>
+<script>
+const $=id=>document.getElementById(id);
+let socket=null,pressed=new Set(),busy=false;
+const status=t=>$("status").textContent=t;
+function actionState(){
+ const s={}; for(const k of ["forward","back","left","right","jump","sneak","sprint","attack"])s[k]=pressed.has(k);
+ s.camera=[0,0]; return s;
+}
+async function start(){
+ const token=$("token").value.trim(),file=$("prompt").files[0];
+ if(!token||!file){status("トークンと初期画像を指定してください。");return}
+ $("start").disabled=true;status("画像を送信し、モデルを初期化しています。Colabでは初回ロードに時間がかかります…");
+ try{
+  const fd=new FormData();fd.append("prompt",file);
+  const res=await fetch("/api/session",{method:"POST",headers:{"X-Session-Token":token},body:fd});
+  const data=await res.json();if(!res.ok)throw Error(data.detail||"セッション作成に失敗");
+  if(socket)socket.close();
+  socket=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws/"+data.session_id+"?token="+encodeURIComponent(token));
+  socket.binaryType="blob";
+  socket.onopen=()=>status("接続完了。WASDなどで操作してね。");
+  socket.onmessage=e=>{
+   if(typeof e.data==="string"){try{const d=JSON.parse(e.data);if(d.error)status(d.error)}catch{};busy=false;return}
+   const url=URL.createObjectURL(e.data);$("screen").onload=()=>URL.revokeObjectURL($("screen").src);$("screen").src=url;busy=false;status("生成完了。次の操作を入力できます。");
+  };
+  socket.onerror=()=>status("WebSocket接続エラー。サーバー状態を確認してください。");
+  socket.onclose=()=>{busy=false;status("接続が終了しました。")};
+ }catch(e){status(String(e))}
+ $("start").disabled=false;
+}
+function send(){
+ if(!socket||socket.readyState!==WebSocket.OPEN||busy)return;
+ busy=true;status("次のフレームを生成中…");socket.send(JSON.stringify(actionState()));
+}
+$("start").addEventListener("click",start);
+const keyMap={w:"forward",ArrowUp:"forward",s:"back",ArrowDown:"back",a:"left",ArrowLeft:"left",d:"right",ArrowRight:"right", " ":"jump",Shift:"sneak",Control:"sprint"};
+window.addEventListener("keydown",e=>{const k=keyMap[e.key];if(k){e.preventDefault();pressed.add(k);if(!e.repeat)send()}});
+window.addEventListener("keyup",e=>{const k=keyMap[e.key];if(k)pressed.delete(k)});
+document.querySelectorAll("[data-key]").forEach(b=>{
+ const k=b.dataset.key;
+ b.addEventListener("pointerdown",e=>{e.preventDefault();pressed.add(k);send()});
+ for(const ev of ["pointerup","pointerleave","pointercancel"])b.addEventListener(ev,()=>pressed.delete(k));
+});
+$("screen").addEventListener("click",()=>{pressed.add("attack");send();pressed.delete("attack")});
+</script>
+</body></html>
