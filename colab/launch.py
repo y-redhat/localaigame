@@ -31,8 +31,47 @@ def main():
     run([sys.executable, "-m", "pip", "install", "-q", "einops", "diffusers", "timm", "av",
          "safetensors", "huggingface_hub", "fastapi", "uvicorn[standard]", "python-multipart", "pillow"])
 
-    if not OASIS_ROOT.exists():
-        run(["git", "clone", "--depth", "1", "https://github.com/etched-ai/open-oasis.git", str(OASIS_ROOT)])
+    # GitHub may temporarily require authentication for anonymous HTTPS git clones.
+    # Prefer a normal shallow clone, then fall back to the public source archive.
+    if not (OASIS_ROOT / "generate.py").is_file():
+        if OASIS_ROOT.exists():
+            shutil.rmtree(OASIS_ROOT)
+        clone_ok = False
+        try:
+            run(["git", "-c", "http.version=HTTP/1.1", "clone", "--depth", "1",
+                 "https://github.com/etched-ai/open-oasis.git", str(OASIS_ROOT)])
+            clone_ok = (OASIS_ROOT / "generate.py").is_file()
+        except subprocess.CalledProcessError:
+            print("通常のgit cloneに失敗。公開ソースアーカイブ方式に切り替えます。")
+        if not clone_ok:
+            import zipfile
+            import tempfile
+            archive_url = "https://codeload.github.com/etched-ai/open-oasis/zip/refs/heads/main"
+            archive_path = Path(tempfile.gettempdir()) / "open-oasis-main.zip"
+            try:
+                urllib.request.urlretrieve(archive_url, archive_path)
+                with zipfile.ZipFile(archive_path) as zf:
+                    zf.extractall("/content")
+                extracted = Path("/content/open-oasis-main")
+                if not (extracted / "generate.py").is_file():
+                    # GitHub archive folders can include a commit suffix.
+                    candidates = [p for p in Path("/content").glob("open-oasis-*") if (p / "generate.py").is_file()]
+                    if not candidates:
+                        raise RuntimeError("アーカイブ内にgenerate.pyが見つかりません。")
+                    extracted = candidates[0]
+                if OASIS_ROOT.exists():
+                    shutil.rmtree(OASIS_ROOT)
+                extracted.rename(OASIS_ROOT)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Oasisソースの取得に失敗しました。GitHubの一時的な認証要求、"
+                    "ネットワーク制限、またはアーカイブURLを確認してください。"
+                ) from exc
+            finally:
+                archive_path.unlink(missing_ok=True)
+
+    if not (OASIS_ROOT / "generate.py").is_file():
+        raise RuntimeError(f"Oasisソースが不完全です: {OASIS_ROOT}")
 
     from huggingface_hub import hf_hub_download, login
     if not os.getenv("HF_TOKEN"):
